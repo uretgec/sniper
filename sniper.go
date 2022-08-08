@@ -19,15 +19,15 @@ const dirMode = 0755
 const fileMode = 0644
 
 //ErrCollision -  must not happen
-var ErrCollision = errors.New("Error, hash collision")
+var ErrCollision = errors.New("hash collision")
 
 // ErrFormat unexpected file format
-var ErrFormat = errors.New("Error, unexpected file format")
+var ErrFormat = errors.New("unexpected file format")
 
 // ErrNotFound key not found error
-var ErrNotFound = errors.New("Error, key not found")
+var ErrNotFound = errors.New("key not found")
 
-var counters sync.Map
+//var counters sync.Map
 var mutex = &sync.RWMutex{} //global mutex for counters and so on
 //var chunkColCnt uint32      //chunks for collisions resolving
 
@@ -47,6 +47,7 @@ type Store struct {
 	expiv          interval.Interval
 	ss             *sortedset.SortedSet
 	//tree         *btreeset.BTreeSet
+	indexList []string
 }
 
 // OptStore is a store options
@@ -120,6 +121,14 @@ func SyncInterval(interv time.Duration) OptStore {
 	}
 }
 
+// AddBucketIndexList
+func CreateBucketIndexIfNotExists(indexList []string) OptStore {
+	return func(s *Store) error {
+		s.indexList = indexList
+		return nil
+	}
+}
+
 // ExpireInterval - how often run key expiration process
 // expire only one chunk
 func ExpireInterval(interv time.Duration) OptStore {
@@ -165,6 +174,7 @@ func Open(opts ...OptStore) (s *Store, err error) {
 	s.expireInterval = 0
 	s.chunkColCnt = 4
 	s.chunksCnt = 256
+	s.ss = sortedset.New()
 	// call option functions on instance to set options on it
 	for _, opt := range opts {
 		err := opt(s)
@@ -191,7 +201,8 @@ func Open(opts ...OptStore) (s *Store, err error) {
 					break
 				}
 
-				err := s.chunks[i].init(fmt.Sprintf("%s/%d", s.dir, i))
+				s.chunks[i].indexList = s.indexList
+				err := s.chunks[i].init(fmt.Sprintf("%s/%d", s.dir, i), s.ss)
 				if err != nil {
 					errchan <- err
 					exitworkers = true
@@ -214,7 +225,7 @@ func Open(opts ...OptStore) (s *Store, err error) {
 		err = <-errchan
 		return
 	}
-	s.ss = sortedset.New()
+
 	return
 }
 
@@ -375,7 +386,7 @@ func (s *Store) Restore(r io.Reader) (err error) {
 	b := make([]byte, 1)
 	_, err = r.Read(b)
 	if int(b[0]) != chunkVersion {
-		return fmt.Errorf("Bad backup version %d", b[0])
+		return fmt.Errorf("bad backup version %d", b[0])
 	}
 
 	for {
@@ -437,7 +448,7 @@ func (s *Store) Expire() (err error) {
 	return
 }
 
-func readUint32(b []byte) uint32 {
+/*func readUint32(b []byte) uint32 {
 	_ = b[3]
 	return uint32(b[3]) | uint32(b[2])<<8 | uint32(b[1])<<16 | uint32(b[0])<<24
 }
@@ -450,7 +461,7 @@ func appendUint32(b []byte, x uint32) []byte {
 		byte(x),
 	}
 	return append(b, a[:]...)
-}
+}*/
 
 // Bucket - create new bucket for storing keys with same prefix in memory index
 func (s *Store) Bucket(name string) (*sortedset.BucketStore, error) {
@@ -494,6 +505,42 @@ func (s *Store) Put(bucket *sortedset.BucketStore, k, v []byte) (err error) {
 		bucket.Put(string(k))
 	}
 	return
+}
+
+// Remove - delete item by key
+// And remove key in index (backed by sortedset)
+func (s *Store) Remove(bucket *sortedset.BucketStore, k []byte) (isDeleted bool, err error) {
+	key := []byte(bucket.Name)
+	key = append(key, k...)
+	isDeleted, err = s.Delete(key)
+	if err != nil {
+		return isDeleted, err
+	}
+
+	if isDeleted {
+		isDeleted = bucket.Set.Delete(string(k))
+	}
+
+	return isDeleted, nil
+}
+
+// HasIndex - has key in index (backed by sortedset)
+func (s *Store) HasIndex(bucket *sortedset.BucketStore, k []byte) (isHere bool) {
+	key := []byte(bucket.Name)
+	key = append(key, k...)
+	return bucket.Set.Has(string(key))
+}
+
+// PutIndex - add key in index (backed by sortedset)
+func (s *Store) PutIndex(bucket *sortedset.BucketStore, k []byte) {
+	bucket.Put(string(k))
+}
+
+// RemoveIndex - remove key in index (backed by sortedset)
+func (s *Store) RemoveIndex(bucket *sortedset.BucketStore, k []byte) (isDeleted bool) {
+	key := []byte(bucket.Name)
+	key = append(key, k...)
+	return bucket.Set.Delete(string(key))
 }
 
 // Keys will return keys stored with Put method

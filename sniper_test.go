@@ -354,7 +354,7 @@ func TestExpireKey(t *testing.T) {
 	// sleep 2 sec, key1 should expired
 	time.Sleep(time.Second * 2)
 
-	res, err = s.Get([]byte("key1"))
+	_, err = s.Get([]byte("key1"))
 	assert.Equal(t, ErrNotFound, err)
 
 	assert.Equal(t, 1, s.Count())
@@ -368,7 +368,7 @@ func TestExpireKey(t *testing.T) {
 	// sleep 2 sec, key1 should expired
 	time.Sleep(time.Second * 2)
 
-	res, err = s.Get([]byte("key2"))
+	_, err = s.Get([]byte("key2"))
 	assert.Equal(t, ErrNotFound, err)
 
 	// all keys expired
@@ -396,7 +396,7 @@ func TestExpireKey(t *testing.T) {
 
 	// sleep 2 sec, key1 should stay
 	time.Sleep(time.Second * 2)
-	res, err = s.Get([]byte("key"))
+	_, err = s.Get([]byte("key"))
 	assert.NoError(t, err)
 
 	unixtime = uint32(time.Now().Unix())
@@ -405,7 +405,7 @@ func TestExpireKey(t *testing.T) {
 
 	// sleep 3 sec, key1 should stay
 	time.Sleep(time.Second * 3)
-	res, err = s.Get([]byte("key"))
+	_, err = s.Get([]byte("key"))
 	assert.NoError(t, err)
 
 	// sleep 3 sec, key should expired
@@ -491,5 +491,130 @@ func TestBackup(t *testing.T) {
 	assert.NoError(t, err)
 
 	err = os.Remove(backup)
+	assert.NoError(t, err)
+}
+
+func TestMultipleBucketIndex(t *testing.T) {
+	err := DeleteStore("2")
+	assert.NoError(t, err)
+
+	s, err := Open(Dir("2"), ChunksCollision(0), ChunksTotal(2), CreateBucketIndexIfNotExists([]string{"users", "items"}))
+	assert.NoError(t, err)
+	users, err := s.Bucket("users")
+	assert.NoError(t, err)
+
+	err = s.Put(users, []byte("01"), []byte("rob"))
+	assert.NoError(t, err)
+
+	err = s.Put(users, []byte("02"), []byte("bob"))
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"02", "01"}, users.Keys(0, 0))
+
+	items, err := s.Bucket("items")
+	assert.NoError(t, err)
+
+	err = s.Put(items, []byte("01"), []byte("roby"))
+	assert.NoError(t, err)
+
+	err = s.Put(items, []byte("02"), []byte("boby"))
+	assert.NoError(t, err)
+
+	err = s.Put(items, []byte("03"), []byte("moby"))
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"03", "02", "01"}, items.Keys(0, 0))
+
+	err = DeleteStore("2")
+	assert.NoError(t, err)
+}
+
+func generateBucketKey(bucketName string, k []byte) []byte {
+	key := []byte(bucketName)
+	return append(key, k...)
+}
+
+func TestBucketPutIndex(t *testing.T) {
+	err := DeleteStore("2")
+	assert.NoError(t, err)
+
+	s, err := Open(Dir("2"), ChunksCollision(0), ChunksTotal(2), CreateBucketIndexIfNotExists([]string{"users"}))
+	assert.NoError(t, err)
+	users, err := s.Bucket("users")
+	assert.NoError(t, err)
+
+	err = s.Set(generateBucketKey(users.Name, []byte("01")), []byte("rob"), 0)
+	assert.NoError(t, err)
+	s.PutIndex(users, []byte("01"))
+
+	err = s.Set(generateBucketKey(users.Name, []byte("02")), []byte("bob"), 0)
+	assert.NoError(t, err)
+	s.PutIndex(users, []byte("02"))
+
+	assert.Equal(t, []string{"02", "01"}, users.Keys(0, 0))
+
+	err = DeleteStore("2")
+	assert.NoError(t, err)
+}
+
+func TestBucketRemoveIndex(t *testing.T) {
+	err := DeleteStore("2")
+	assert.NoError(t, err)
+
+	s, err := Open(Dir("2"), ChunksCollision(0), ChunksTotal(2), CreateBucketIndexIfNotExists([]string{"users"}))
+	assert.NoError(t, err)
+	users, err := s.Bucket("users")
+	assert.NoError(t, err)
+
+	err = s.Set(generateBucketKey(users.Name, []byte("01")), []byte("rob"), 0)
+	assert.NoError(t, err)
+	s.PutIndex(users, []byte("01"))
+
+	err = s.Set(generateBucketKey(users.Name, []byte("02")), []byte("bob"), 0)
+	assert.NoError(t, err)
+	s.PutIndex(users, []byte("02"))
+
+	deleted, err := s.Delete(generateBucketKey(users.Name, []byte("02")))
+	assert.NoError(t, err)
+	assert.True(t, deleted)
+	deleted = s.RemoveIndex(users, []byte("02"))
+	assert.True(t, deleted)
+
+	assert.Equal(t, []string{"01"}, users.Keys(0, 0))
+
+	err = DeleteStore("2")
+	assert.NoError(t, err)
+}
+
+func TestBucketHasIndex(t *testing.T) {
+	err := DeleteStore("2")
+	assert.NoError(t, err)
+
+	s, err := Open(Dir("2"), ChunksCollision(0), ChunksTotal(2), CreateBucketIndexIfNotExists([]string{"users"}))
+	assert.NoError(t, err)
+	users, err := s.Bucket("users")
+	assert.NoError(t, err)
+
+	err = s.Set(generateBucketKey(users.Name, []byte("01")), []byte("rob"), 0)
+	assert.NoError(t, err)
+	s.PutIndex(users, []byte("01"))
+
+	err = s.Set(generateBucketKey(users.Name, []byte("02")), []byte("bob"), 0)
+	assert.NoError(t, err)
+	s.PutIndex(users, []byte("02"))
+
+	has := s.HasIndex(users, []byte("02"))
+	assert.True(t, has)
+
+	deleted, err := s.Delete(generateBucketKey(users.Name, []byte("02")))
+	assert.NoError(t, err)
+	assert.True(t, deleted)
+	deleted = s.RemoveIndex(users, []byte("02"))
+	assert.True(t, deleted)
+
+	has = s.HasIndex(users, []byte("02"))
+	assert.False(t, has)
+
+	assert.Equal(t, []string{"01"}, users.Keys(0, 0))
+
+	err = DeleteStore("2")
 	assert.NoError(t, err)
 }

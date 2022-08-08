@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
+
+	"github.com/recoilme/sortedset"
 )
 
 const (
@@ -29,6 +32,7 @@ type chunk struct {
 	m         map[uint32]addrSize // keys: hash / addr&len
 	h         map[uint32]byte     // holes: addr / size
 	needFsync bool
+	indexList []string
 }
 
 type addrSize struct {
@@ -47,7 +51,7 @@ type Header struct {
 // https://github.com/thejerf/gomempool/blob/master/pool.go#L519
 // http://graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
 // suitably modified to work on 32-bit
-func nextPowerOf2(v uint32) uint32 {
+/*func nextPowerOf2(v uint32) uint32 {
 	v--
 	v |= v >> 1
 	v |= v >> 2
@@ -57,7 +61,7 @@ func nextPowerOf2(v uint32) uint32 {
 	v++
 
 	return v
-}
+}*/
 
 // NextPowerOf2 return next power of 2 for v and it's value
 // return maxuint32 in case of overflow
@@ -85,7 +89,7 @@ func detectChunkVersion(file *os.File) (version int, err error) {
 		return -1, errRead
 	}
 	if n != 2 {
-		return -1, errors.New("File too short")
+		return -1, errors.New("file too short")
 	}
 
 	// 255 version marker
@@ -148,7 +152,7 @@ func readHeader(r io.Reader, version int) (header *Header, err error) {
 	case 1:
 		header = parseHeader(b)
 	default:
-		err = fmt.Errorf("Unknov header version %d", version)
+		err = fmt.Errorf("unknown header version %d", version)
 	}
 	return
 }
@@ -159,7 +163,7 @@ func writeHeader(b []byte, header *Header) {
 	binary.BigEndian.PutUint16(b[2:4], header.keylen)
 	binary.BigEndian.PutUint32(b[4:8], header.vallen)
 	binary.BigEndian.PutUint32(b[8:12], header.expire)
-	return
+	//return
 }
 
 // pack addr & size to addrSize
@@ -191,7 +195,7 @@ func packetUnmarshal(packet []byte) (header *Header, k, v []byte) {
 	return
 }
 
-func (c *chunk) init(name string) (err error) {
+func (c *chunk) init(name string, ss *sortedset.SortedSet) (err error) {
 	c.Lock()
 	defer c.Unlock()
 
@@ -225,7 +229,7 @@ func (c *chunk) init(name string) (err error) {
 		}
 
 		if version < 0 || version > 1 {
-			err = errors.New("Unknown chunk version in file " + name)
+			err = errors.New("unknown chunk version in file " + name)
 			return
 		}
 
@@ -340,6 +344,9 @@ func (c *chunk) init(name string) (err error) {
 			if header.status != deleted && (header.expire == 0 || int64(header.expire) >= time.Now().Unix()) {
 				h := hash(key)
 				c.m[h] = addrSizeMarshal(uint32(seek), header.sizeb)
+
+				// Put Index
+				c.put(ss, key)
 			} else {
 				//deleted blocks store
 				c.h[uint32(seek)] = header.sizeb // seek / size
@@ -580,7 +587,7 @@ func (c *chunk) incrdecr(k []byte, h uint32, v uint64, isIncr bool) (counter uin
 	}
 	if len(old) != 8 {
 		//better, then panic
-		return 0, errors.New("Unexpected value format")
+		return 0, errors.New("unexpected value format")
 	}
 	if err != nil {
 		return
@@ -638,10 +645,50 @@ func (c *chunk) backup(w io.Writer) (err error) {
 		if header.status == deleted || (header.expire != 0 && int64(header.expire) < time.Now().Unix()) {
 			continue
 		}
-		n, errRead = w.Write(b)
+		_, errRead = w.Write(b)
 		if errRead != nil {
 			return fmt.Errorf("%s: %w", errRead.Error(), ErrFormat)
 		}
 	}
 	return nil
 }
+
+// index methods - only use loading the database
+func (s *chunk) getKey(k []byte) (bucketName, key string) {
+	for _, indexName := range s.indexList {
+		if strings.HasPrefix(string(k), indexName) {
+			bucketName = indexName
+			break
+		}
+	}
+
+	if bucketName != "" {
+		return bucketName, strings.Replace(string(k), bucketName, "", 1)
+	}
+
+	return
+}
+
+//
+func (s *chunk) put(ss *sortedset.SortedSet, k []byte) (err error) {
+	bucketName, key := s.getKey(k)
+
+	if bucketName != "" {
+		bucket := sortedset.Bucket(ss, bucketName)
+		bucket.Put(key)
+	}
+
+	return
+}
+
+/*
+TODO: not needed yet :)
+func (s *chunk) remove(ss *sortedset.SortedSet, k []byte) (err error) {
+	bucketName, key := s.getKey(k)
+
+	if bucketName != "" {
+		ss.Delete(key)
+	}
+
+	return
+}*/
