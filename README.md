@@ -1,9 +1,17 @@
 # `sniper`
 
-[![GoDoc](https://img.shields.io/badge/api-reference-blue.svg?style=flat-square)](https://godoc.org/github.com/recoilme/sniper)
+[GoDoc](https://godoc.org/github.com/recoilme/sniper)
 
 A simple and efficient thread-safe key/value store for Go.
 
+> NOTES: 
+> Original sniper repositroy not support Bucket (sortedset) reindex. If database closed, bucket indexes pufff.
+> This repository supports:
+> - Bucket reindexing after database opened or chucks init.
+> - Add new Index methods: Remove, PutIndex, RemoveIndex, HasIndex -> Look at the tests file how to use it
+
+
+> TODO: Bucket Items count method is missing!!!
 
 # Getting Started
 
@@ -19,8 +27,14 @@ A simple and efficient thread-safe key/value store for Go.
 
 To start using `sniper`, install Go and run `go get`:
 
+Original Package
 ```sh
 $ go get -u github.com/recoilme/sniper
+```
+
+Modify Package
+```sh
+$ go get -u github.com/uretgec/sniper
 ```
 
 This will retrieve the library.
@@ -35,6 +49,33 @@ s, _ := sniper.Open(sniper.Dir("1"))
 s.Set([]byte("hello"), []byte("go"))
 res, _ = s.Get([]byte("hello"))
 fmt.Println(res)
+s.Close()
+// Output:
+// go
+```
+
+with Bucket includes this methods: (this methods can use only this repository)
+`CreateBucketIndexIfNotExists`,`Put`,`Remove`,`Keys`,`PutIndex`,`RemoveIndex`,`HasIndex`.
+
+```go
+s, _ := sniper.Open(sniper.Dir("2"),CreateBucketIndexIfNotExists([]string{"users"}))
+
+users, _ := s.Bucket("users")
+s.Set([]byte("users01")), []byte("rob"), 0) // Set users01 -> rob
+s.PutIndex(users, []byte("01")) // users01 put into users bucket index
+
+keys := users.Keys(0, 0)
+fmt.Printf("%v#\n", keys) // []string{"01"}
+
+has := s.HasIndex(users, []byte("01"))
+fmt.Println(has) // true
+
+deleted := s.RemoveIndex(users, []byte("02"))
+fmt.Println(deleted) // false
+
+res, _ = s.Get([]byte("users01"))
+fmt.Println(res)
+
 s.Close()
 // Output:
 // go
