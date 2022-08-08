@@ -7,7 +7,7 @@ A simple and efficient thread-safe key/value store for Go.
 > NOTES: 
 > Original sniper repositroy not support Bucket (sortedset) reindex. If database closed, bucket indexes pufff.
 > This repository supports:
-> - Bucket reindexing after database opened.
+> - Bucket reindexing after database opened or chucks init.
 > - Add new Index methods: Remove, PutIndex, RemoveIndex, HasIndex -> Look at the tests file how to use it
 
 
@@ -27,6 +27,12 @@ A simple and efficient thread-safe key/value store for Go.
 
 To start using `sniper`, install Go and run `go get`:
 
+Original Package
+```sh
+$ go get -u github.com/recoilme/sniper
+```
+
+Modify Package
 ```sh
 $ go get -u github.com/uretgec/sniper
 ```
